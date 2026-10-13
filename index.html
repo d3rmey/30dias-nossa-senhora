@@ -197,7 +197,7 @@ footer{background:#0a1630;color:#9aa6c2;text-align:center;padding:24px 20px;font
 const CONFIG = {
   checkoutUrl: "https://SEU-LINK-DE-CHECKOUT-AQUI",
   imgFolder: "capas/",
-  imgExt: ".png",
+  imgExts: [".webp", ".png"],   // tenta WebP primeiro; se não existir, usa PNG
   totalDays: 30,
   autoplayMs: 1500
 };
@@ -256,24 +256,47 @@ function makeBook(day){
   const fb=document.createElement('div');fb.className='fallback';
   fb.innerHTML=`<div class="top">30 DIAS NO COLO DE NOSSA SENHORA</div><div class="day">DIA ${pad(day)}</div><div class="t">${title}</div>`;
   wrap.appendChild(fb);
-  const img=new Image();
-  img.src=`${CONFIG.imgFolder}dia-${pad(day)}${CONFIG.imgExt}`;
-  img.alt=`Capa do Dia ${pad(day)}: ${title}`;
-  img.decoding='async';
-  img.onload=()=>{fb.remove();wrap.prepend(img)};
+  wrap.state='idle';
+  wrap.load=function(){
+    if(wrap.state!=='idle')return;
+    wrap.state='loading';
+    let k=0;
+    (function tryNext(){
+      if(k>=CONFIG.imgExts.length){wrap.state='done';return}
+      const img=new Image();
+      img.decoding='async';
+      img.alt=`Capa do Dia ${pad(day)}: ${title}`;
+      img.onload=()=>{fb.remove();wrap.prepend(img);wrap.state='done'};
+      img.onerror=()=>{k++;tryNext()};
+      img.src=`${CONFIG.imgFolder}dia-${pad(day)}${CONFIG.imgExts[k]}`;
+    })();
+  };
   return wrap;
+}
+const books=[];
+/* carrega a capa atual e as vizinhas primeiro */
+function ensure(i){for(let k=i-1;k<=i+4;k++){books[(k+books.length)%books.length].load()}}
+/* as demais carregam em segundo plano, no máximo 3 por vez */
+function bgLoad(){
+  const loading=books.filter(b=>b.state==='loading').length;
+  const next=books.find(b=>b.state==='idle');
+  if(!next)return;
+  if(loading<3)next.load();
+  setTimeout(bgLoad,300);
 }
 
 const car=document.getElementById('carousel'),dots=document.getElementById('dots'),count=document.getElementById('carCount');
 const slides=[];
 for(let d=1;d<=CONFIG.totalDays;d++){
-  const s=document.createElement('div');s.className='slide';s.appendChild(makeBook(d));car.appendChild(s);slides.push(s);
+  const bk=makeBook(d);books.push(bk);
+  const s=document.createElement('div');s.className='slide';s.appendChild(bk);car.appendChild(s);slides.push(s);
   const b=document.createElement('button');b.className='dot';b.setAttribute('aria-label','Dia '+d);
   b.onclick=()=>{stop();go(d-1)};dots.appendChild(b);
 }
 let cur=0;
 function setActive(i){
   cur=i;
+  ensure(i);
   slides.forEach((s,k)=>s.classList.toggle('active',k===i));
   [...dots.children].forEach((x,k)=>x.classList.toggle('on',k===i));
   count.textContent=`Dia ${pad(i+1)} de ${CONFIG.totalDays}`;
@@ -297,7 +320,13 @@ document.getElementById('prev').onclick=()=>{stop();go(cur-1)};
 document.getElementById('next').onclick=()=>{stop();go(cur+1)};
 setActive(0);
 
-let auto=setInterval(()=>go(cur>=slides.length-1?0:cur+1),CONFIG.autoplayMs),stopped=false;
+/* o automático só avança quando a próxima capa já carregou */
+let auto=setInterval(()=>{
+  const n=cur>=slides.length-1?0:cur+1;
+  ensure(n);
+  if(books[n].state==='done')go(n);
+},CONFIG.autoplayMs),stopped=false;
+setTimeout(bgLoad,600);
 function stop(){if(!stopped){clearInterval(auto);stopped=true}}
 ['touchstart','mousedown','wheel'].forEach(e=>car.addEventListener(e,stop,{passive:true}));
 
